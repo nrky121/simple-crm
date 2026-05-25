@@ -1,0 +1,302 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+}
+
+enum CompanySize {
+  SOLO
+  SMALL
+  MEDIUM
+  LARGE
+  ENTERPRISE
+}
+
+enum DealStage {
+  LEAD
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  CLOSED_WON
+  CLOSED_LOST
+}
+
+enum ActivityType {
+  EMAIL
+  CALL
+  MEETING
+  NOTE
+  TASK
+  OTHER
+}
+
+enum TaskStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model Profile {
+  id        String   @id @db.Uuid
+  email     String   @unique
+  fullName  String?
+  avatarUrl String?
+  role      Role     @default(USER)
+  team      String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  ownedContacts Contact[]  @relation("ContactOwner")
+  ownedDeals    Deal[]     @relation("DealOwner")
+  assignedTasks Task[]     @relation("TaskAssignee")
+  activities    Activity[] @relation("ActivityCreator")
+  auditLogs     AuditLog[]
+
+  @@map("profiles")
+}
+
+model Tag {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  color     String   @default("#6366f1")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contacts ContactTag[]
+  companies CompanyTag[]
+
+  @@map("tags")
+}
+
+model Company {
+  id          String      @id @default(uuid()) @db.Uuid
+  name        String
+  domain      String?
+  industry    String?
+  size        CompanySize?
+  website     String?
+  linkedinUrl String?
+  country     String?
+  city        String?
+  notes       String?
+  isArchived  Boolean     @default(false)
+  searchVector String?    // tsvector stored as text; maintained by DB trigger
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  ownerId    String?  @db.Uuid
+  contacts   Contact[]
+  deals      Deal[]
+  tags       CompanyTag[]
+  activities Activity[]
+
+  @@index([name])
+  @@index([domain])
+  @@index([isArchived])
+  @@map("companies")
+}
+
+model CompanyTag {
+  companyId String   @db.Uuid
+  tagId     String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, tagId])
+  @@map("company_tags")
+}
+
+model Contact {
+  id            String   @id @default(uuid()) @db.Uuid
+  firstName     String
+  lastName      String?
+  email         String?
+  phone         String?
+  title         String?
+  linkedinUrl   String?
+  twitterHandle String?
+  notes         String?
+  source        String?
+  isArchived    Boolean  @default(false)
+  searchVector  String?  // tsvector stored as text; maintained by DB trigger
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  companyId String?  @db.Uuid
+  ownerId   String?  @db.Uuid
+
+  company    Company?   @relation(fields: [companyId], references: [id])
+  owner      Profile?   @relation("ContactOwner", fields: [ownerId], references: [id])
+  tags       ContactTag[]
+  deals      DealContact[]
+  activities Activity[]
+  tasks      Task[]
+
+  @@index([email])
+  @@index([companyId])
+  @@index([ownerId])
+  @@index([isArchived])
+  @@map("contacts")
+}
+
+model ContactTag {
+  contactId String   @db.Uuid
+  tagId     String   @db.Uuid
+  createdAt DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+  @@map("contact_tags")
+}
+
+model Deal {
+  id          String    @id @default(uuid()) @db.Uuid
+  title       String
+  value       Decimal?  @db.Decimal(14, 2)
+  currency    String    @default("USD")
+  stage       DealStage @default(LEAD)
+  probability Int?      // 0-100
+  expectedCloseDate DateTime?
+  closedAt    DateTime?
+  notes       String?
+  isArchived  Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  companyId String?  @db.Uuid
+  ownerId   String?  @db.Uuid
+
+  company      Company?          @relation(fields: [companyId], references: [id])
+  owner        Profile?          @relation("DealOwner", fields: [ownerId], references: [id])
+  contacts     DealContact[]
+  stageHistory DealStageHistory[]
+  activities   Activity[]
+  tasks        Task[]
+
+  @@index([stage])
+  @@index([companyId])
+  @@index([ownerId])
+  @@index([isArchived])
+  @@map("deals")
+}
+
+model DealContact {
+  dealId    String   @db.Uuid
+  contactId String   @db.Uuid
+  isPrimary Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  deal    Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@id([dealId, contactId])
+  @@map("deal_contacts")
+}
+
+model DealStageHistory {
+  id        String    @id @default(uuid()) @db.Uuid
+  dealId    String    @db.Uuid
+  fromStage DealStage?
+  toStage   DealStage
+  changedAt DateTime  @default(now())
+  changedBy String?   @db.Uuid
+
+  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+
+  @@index([dealId])
+  @@map("deal_stage_history")
+}
+
+model Activity {
+  id        String       @id @default(uuid()) @db.Uuid
+  type      ActivityType
+  subject   String
+  body      String?
+  occurredAt DateTime    @default(now())
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  createdById String?  @db.Uuid
+  contactId   String?  @db.Uuid
+  companyId   String?  @db.Uuid
+  dealId      String?  @db.Uuid
+
+  createdBy Profile? @relation("ActivityCreator", fields: [createdById], references: [id])
+  contact   Contact? @relation(fields: [contactId], references: [id])
+  company   Company? @relation(fields: [companyId], references: [id])
+  deal      Deal?    @relation(fields: [dealId], references: [id])
+
+  @@index([contactId])
+  @@index([companyId])
+  @@index([dealId])
+  @@index([createdById])
+  @@map("activities")
+}
+
+model Task {
+  id          String       @id @default(uuid()) @db.Uuid
+  title       String
+  description String?
+  status      TaskStatus   @default(OPEN)
+  priority    TaskPriority @default(MEDIUM)
+  dueDate     DateTime?
+  completedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  assigneeId String?  @db.Uuid
+  contactId  String?  @db.Uuid
+  dealId     String?  @db.Uuid
+
+  assignee Profile? @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  contact  Contact? @relation(fields: [contactId], references: [id])
+  deal     Deal?    @relation(fields: [dealId], references: [id])
+
+  @@index([assigneeId])
+  @@index([contactId])
+  @@index([dealId])
+  @@index([status])
+  @@index([dueDate])
+  @@map("tasks")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  model     String
+  recordId  String
+  action    String
+  changes   Json?
+  createdAt DateTime @default(now())
+
+  user Profile @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([model, recordId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
