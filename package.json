@@ -10,7 +10,7 @@
     "lint": "next lint",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
-    "db:seed": "tsx prisma/seed.ts",
+    "db:seed": "tsx --env-file=.env.local prisma/seed.ts",
     "db:push": "supabase db push",
     "prepare": "husky"
   },
