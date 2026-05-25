@@ -31,7 +31,8 @@ Simple CRM is a **monolithic full-stack web application** built on Next.js 14 (A
 | Rendering | Hybrid — RSC + CSR | Server Components for initial load; TanStack Query for client mutations |
 | API style | REST (Next.js Route Handlers) | Simple, cacheable, no extra server process |
 | Data access | ORM (Prisma) | Type-safe queries; migration management |
-| Auth | Session-based (NextAuth.js) | Cookie-backed JWT sessions; no token refresh complexity |
+| Auth | Supabase Auth + `@supabase/ssr` | Cookie-backed sessions managed by Supabase; PKCE for OAuth |
+| Authorization | RLS + server-side checks | DB-level RLS policies + `assertCanEdit()` in route handlers |
 
 ### What this is NOT
 
@@ -91,14 +92,27 @@ Simple CRM is a **monolithic full-stack web application** built on Next.js 14 (A
                     ┌───────────────────────┼───────────────────────┐
                     │                       │                       │
                     ▼                       ▼                       ▼
-        ┌───────────────────┐  ┌─────────────────────┐  ┌─────────────────┐
-        │   SUPABASE        │  │   SUPABASE AUTH      │  │    SENTRY       │
-        │   PostgreSQL      │  │   (NextAuth adapter) │  │  (error logs)   │
-        │                   │  │                      │  └─────────────────┘
-        │  pgBouncer pool   │  │  Sessions table      │
-        │  GIN indexes      │  │  Accounts table      │
-        │  tsvector search  │  └─────────────────────┘
-        └───────────────────┘
+        ┌───────────────────────────────────────────┐  ┌─────────────────┐
+        │              SUPABASE                     │  │    SENTRY       │
+        │                                           │  │  (error logs)   │
+        │  ┌─────────────┐  ┌────────────────────┐  │  └─────────────────┘
+        │  │ Auth        │  │  PostgreSQL 15      │  │
+        │  │             │  │                     │  │
+        │  │ email/pass  │  │  pgBouncer pool     │  │
+        │  │ OAuth/PKCE  │  │  GIN indexes        │  │
+        │  │ magic link  │  │  tsvector search    │  │
+        │  │ auth.users  │  │  RLS policies       │  │
+        │  └─────────────┘  └────────────────────┘  │
+        │                                           │
+        │  ┌─────────────┐  ┌────────────────────┐  │
+        │  │ Realtime    │  │  Storage            │  │
+        │  │             │  │                     │  │
+        │  │ deals table │  │  avatars/ (public)  │  │
+        │  │ subscribe   │  │  attachments/       │  │
+        │  │ → live      │  │  (private)          │  │
+        │  │   Kanban    │  │                     │  │
+        │  └─────────────┘  └────────────────────┘  │
+        └───────────────────────────────────────────┘
 ```
 
 ---
@@ -144,7 +158,7 @@ app/(dashboard)/contacts/page.tsx        ← RSC: fetches initial data, renders 
 | URL/filter state | nuqs | URL query params | Search query, active filters, sort order |
 | UI state | Zustand | Client store | Open modals, slide-overs, selected rows |
 | Form state | React Hook Form | Form components | Create/edit forms with validation |
-| Auth session | NextAuth | Session context | Current user, role, permissions |
+| Auth session | Supabase Auth + `@supabase/ssr` | Cookie / server context | Current user, role, permissions |
 
 ### Client-Side Data Flow
 
@@ -183,7 +197,7 @@ Request
   ▼
 ┌─────────────────────────────────────────────────┐
 │  1. AUTH CHECK                                  │
-│     getServerSession(authOptions)               │
+│     createServerClient() → supabase.auth.getUser│
 │     → 401 if no session                        │
 ├─────────────────────────────────────────────────┤
 │  2. INPUT VALIDATION                            │
@@ -208,12 +222,16 @@ Request
 
 ```
 lib/
+├── supabase/
+│   ├── server.ts      createServerClient(cookies())
+│   │                  Used in: RSC, Route Handlers, Server Actions
+│   ├── client.ts      createBrowserClient()
+│   │                  Used in: Client Components (useCurrentUser, useRealtimeDeals)
+│   └── admin.ts       createAdminClient(SERVICE_ROLE_KEY)
+│                      Used in: admin-only routes (invite user, bypass RLS)
+│
 ├── prisma.ts          Singleton Prisma client + audit middleware
 │                      Uses AsyncLocalStorage to thread userId into audit logs
-│
-├── auth.ts            NextAuth configuration
-│                      Providers, session callbacks, JWT shape
-│                      Augments session with { user.role, user.id }
 │
 ├── permissions.ts     assertCanEdit(), assertIsAdmin()
 │                      Called inside route handlers before any DB write
@@ -322,38 +340,49 @@ Prisma migrations bypass pgBouncer:
 
 ### Session Architecture
 
-NextAuth uses **JWT strategy** with an encrypted cookie. No server-side session store — the session is decoded from the cookie on every request.
+Supabase Auth manages all authentication. `@supabase/ssr` handles cookie storage of the Supabase session in Next.js — the access token + refresh token are stored in HttpOnly cookies and automatically refreshed via middleware.
 
 ```
-┌──────────────┐     POST /api/auth/signin      ┌──────────────────┐
-│    Browser   │ ─────────────────────────────→ │  NextAuth Handler │
-│              │                                 │                  │
-│              │ ←───────────────────────────── │  1. Verify creds  │
-│  Set-Cookie: │     Set-Cookie: next-auth.      │  2. bcrypt check  │
-│  next-auth.  │     session-token=<JWT>         │  3. Sign JWT      │
-│  session-token                                 │  4. Set cookie    │
-└──────────────┘                                 └──────────────────┘
+┌──────────────┐   supabase.auth.signInWithPassword()  ┌─────────────────────┐
+│    Browser   │ ──────────────────────────────────→   │  Supabase Auth       │
+│              │                                        │                     │
+│              │ ←─────────────────────────────────    │  1. Verify creds     │
+│  Set-Cookie: │   sb-<ref>-auth-token (access_token)  │  2. Issue JWT        │
+│  (HttpOnly)  │   sb-<ref>-auth-token-code-verifier   │  3. Set cookies via  │
+└──────────────┘   (refresh_token)                     │     @supabase/ssr    │
+                                                        └─────────────────────┘
 
 Subsequent requests:
-┌──────────────┐     GET /contacts               ┌──────────────────┐
-│    Browser   │ ─── Cookie: session-token ────→ │  middleware.ts    │
-│              │                                 │  getServerSession │
-│              │ ←── 200 HTML ─────────────────  │  → verified ✓    │
-└──────────────┘                                 └──────────────────┘
+┌──────────────┐     GET /contacts               ┌──────────────────────────┐
+│    Browser   │ ─── Cookie: sb-*-auth-token ──→ │  middleware.ts            │
+│              │                                  │  createServerClient()    │
+│              │ ←── 200 HTML ─────────────────   │  supabase.auth.getUser() │
+└──────────────┘                                  │  → verified ✓            │
+                                                  │  updateSession() refreshes│
+                                                  │  token if near expiry    │
+                                                  └──────────────────────────┘
 ```
 
-### JWT Payload
+### Supabase Session Tokens
 
-```typescript
-// The JWT contains (after session callback augmentation):
+```
+Supabase Auth JWT payload:
 {
-  sub: "user_cuid",          // userId
+  sub: "<uuid>",             // auth.users.id = profiles.id
   email: "user@example.com",
-  name: "Ryan Smith",
-  role: "ADMIN" | "USER",    // added in jwt() callback
+  role: "authenticated",     // Supabase built-in role (used by RLS)
+  app_metadata: {
+    provider: "email"        // or "google", "github", etc.
+  },
+  user_metadata: {
+    full_name: "Ryan Smith"
+  },
   iat: 1234567890,
-  exp: 1234567890
+  exp: 1234567890            // 1 hour; refresh token is 7 days
 }
+
+CRM role (ADMIN/USER) is read from profiles.role — NOT embedded in JWT.
+Route handlers fetch it fresh from DB on writes; cached in session context for reads.
 ```
 
 ### Auth Flow Diagram
@@ -362,24 +391,41 @@ Subsequent requests:
 /login page
     │
     ▼ (submit credentials)
-POST /api/auth/signin (NextAuth)
+supabase.auth.signInWithPassword({ email, password })
     │
-    ├── email/password → db lookup → bcrypt.compare()
+    ├── email/password → Supabase Auth verifies → JWT issued
     │         OR
-    └── OAuth (Google) → provider redirect → callback
+supabase.auth.signInWithOAuth({ provider: 'google' })
+    │
+    ├── redirect to Google → callback → /api/auth/callback
+    │         └── supabase.auth.exchangeCodeForSession(code)
     │
     ▼ (success)
-JWT signed with NEXTAUTH_SECRET → HttpOnly cookie
+@supabase/ssr sets sb-*-auth-token cookies (HttpOnly)
     │
     ▼
 Redirect to /dashboard
     │
     ▼
-middleware.ts runs on every /(dashboard) request
-    │
-    ├── session valid → proceed
+middleware.ts runs on every request
+    │  createServerClient(cookies())
+    │  supabase.auth.getUser()
+    ├── session valid → updateSession() → proceed
     └── no session   → redirect /login
+
+Route Handlers:
+    │  const supabase = createServerClient(cookies())
+    │  const { data: { user } } = await supabase.auth.getUser()
+    └── user.id → fetch profiles row → get CRM role
 ```
+
+### Three Supabase Client Variants
+
+| Client | File | Where Used | Key Capability |
+|---|---|---|---|
+| `createServerClient` | `lib/supabase/server.ts` | RSC, Route Handlers, middleware | Reads cookies; server-only |
+| `createBrowserClient` | `lib/supabase/client.ts` | Client Components | Reads cookies; browser |
+| `createAdminClient` | `lib/supabase/admin.ts` | Admin route handlers only | Service role key; bypasses RLS |
 
 ---
 
@@ -394,12 +440,12 @@ Browser: GET /contacts?search=john&tagIds=tag_abc
      └── cache miss → forward to serverless function
 
   2. middleware.ts
-     └── getServerSession() → valid → proceed
+     └── createServerClient() → supabase.auth.getUser() → valid → updateSession()
 
   3. app/(dashboard)/contacts/page.tsx  [RSC]
      └── fetch('/api/contacts?search=john&tagIds=tag_abc')
            └── app/api/contacts/route.ts
-                 ├── getServerSession() → auth ✓
+                 ├── createServerClient() → supabase.auth.getUser() → auth ✓
                  ├── contactListSchema.safeParse(searchParams) → valid ✓
                  ├── prisma.contact.findMany({ where, orderBy, take, cursor })
                  └── return { data: contacts[], meta: { nextCursor, total } }
@@ -422,7 +468,7 @@ User clicks "Save" on ContactForm
      └── optimistic update: update local cache immediately
 
   3. app/api/contacts/[id]/route.ts
-     ├── getServerSession() → auth ✓
+     ├── createServerClient() → supabase.auth.getUser() → auth ✓
      ├── updateContactSchema.safeParse(body) → valid ✓
      ├── prisma.contact.findUnique({ where: { id } }) → exists ✓
      ├── assertCanEdit(session, contact) → owner or admin ✓
@@ -498,6 +544,49 @@ User types in GlobalSearch (Cmd+K)
     │
     ▼
   Command palette renders grouped results
+```
+
+### Supabase Realtime — Live Kanban Flow
+
+```
+User A drags deal to new stage → PATCH /api/deals/[id]
+    │
+    ▼
+prisma.deal.update({ stage: "PROPOSAL" })
+    │
+    ▼  [Supabase Realtime detects DB row change via logical replication]
+    │
+    ▼
+Supabase broadcasts change to all subscribers on "deals" channel
+    │
+    ▼ (received by all connected browsers)
+useRealtimeDeals() hook in KanbanBoard.tsx
+    │
+    ├── payload.eventType === 'UPDATE'
+    └── queryClient.setQueryData(['deals', 'pipeline'], updater)
+          │
+          ▼
+    All users' Kanban boards update instantly — no polling, no full refetch
+```
+
+`useRealtimeDeals()` implementation pattern:
+```typescript
+// hooks/useRealtimeDeals.ts
+const supabase = createBrowserClient()
+
+useEffect(() => {
+  const channel = supabase
+    .channel('deals-changes')
+    .on('postgres_changes',
+      { event: '*', schema: 'public', table: 'deals' },
+      (payload) => {
+        queryClient.invalidateQueries({ queryKey: ['deals', 'pipeline'] })
+      }
+    )
+    .subscribe()
+
+  return () => { supabase.removeChannel(channel) }
+}, [])
 ```
 
 ### Activity Timeline Flow
@@ -652,20 +741,25 @@ Results sorted by score DESC within each entity type.
               ┌───────────────┴────────────────┐
               │                                │
               ▼                                ▼
-┌─────────────────────────┐     ┌──────────────────────────────┐
-│       SUPABASE          │     │          SENTRY              │
-│                         │     │   (error tracking)           │
-│  ┌─────────────────┐    │     └──────────────────────────────┘
-│  │  pgBouncer      │    │
-│  │  (port 5432)    │    │
-│  └───────┬─────────┘    │
-│          │              │
-│  ┌───────▼─────────┐    │
-│  │  PostgreSQL 15  │    │
-│  │  (port 5432     │    │
-│  │   direct)       │    │
-│  └─────────────────┘    │
-└─────────────────────────┘
+┌─────────────────────────────────┐  ┌──────────────────────────────┐
+│           SUPABASE              │  │          SENTRY              │
+│                                 │  │   (error tracking)           │
+│  ┌──────────┐  ┌─────────────┐  │  └──────────────────────────────┘
+│  │  Auth    │  │  PostgreSQL │  │
+│  │ (GoTrue) │  │     15      │  │
+│  └──────────┘  │             │  │
+│                │  pgBouncer  │  │
+│  ┌──────────┐  │  (pooler)   │  │
+│  │ Realtime │  │  GIN indexes│  │
+│  │(Phoenix) │  │  RLS active │  │
+│  └──────────┘  └─────────────┘  │
+│                                 │
+│  ┌──────────────────────────┐   │
+│  │  Storage (S3-compatible) │   │
+│  │  avatars/ (public CDN)   │   │
+│  │  attachments/ (signed)   │   │
+│  └──────────────────────────┘   │
+└─────────────────────────────────┘
 ```
 
 ### Deployment Environments
@@ -707,14 +801,21 @@ Vercel deploys production
 # 1. Install dependencies
 pnpm install
 
-# 2. Start local Postgres (Docker via Supabase CLI)
+# 2. Start local Supabase stack (Auth + DB + Storage + Realtime via Docker)
 supabase start
+# → outputs: API URL, anon key, service_role key, DB URL
 
-# 3. Apply migrations + seed
+# 3. Apply Supabase migrations (RLS, triggers)
+supabase db push
+
+# 4. Apply Prisma migrations + seed
 pnpm prisma migrate dev
 pnpm prisma db seed
 
-# 4. Start dev server
+# 5. Copy local Supabase credentials into .env.local
+# (supabase start prints NEXT_PUBLIC_SUPABASE_URL + keys)
+
+# 6. Start dev server
 pnpm dev
 ```
 
@@ -736,18 +837,23 @@ pnpm dev
 └──────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────┐
-│  LAYER 2: AUTHENTICATION                                 │
-│  NextAuth HttpOnly cookie (CSRF protection built-in)     │
-│  JWT signed with NEXTAUTH_SECRET (HS256)                 │
-│  Passwords: bcrypt cost factor 12                        │
-│  Rate limit: 10 auth requests/min/IP (Upstash)          │
+│  LAYER 2: AUTHENTICATION (Supabase Auth)                 │
+│  HttpOnly cookies via @supabase/ssr (CSRF-safe)          │
+│  JWT signed by Supabase (RS256); verified on every req   │
+│  Passwords: Supabase Auth handles hashing (bcrypt)       │
+│  PKCE flow for OAuth — prevents auth code interception   │
+│  Built-in rate limiting + brute force protection         │
+│  Automatic token refresh in middleware.ts                │
 └──────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────┐
-│  LAYER 3: AUTHORIZATION                                  │
-│  middleware.ts: route-level auth guard                   │
-│  Route handlers: assertCanEdit() / assertIsAdmin()       │
-│  Never trust client-sent userId — use session.user.id    │
+│  LAYER 3: AUTHORIZATION (Two levels)                     │
+│  3a. Next.js middleware: route-level auth guard          │
+│      createServerClient() → getUser() → redirect /login  │
+│  3b. Route handlers: assertCanEdit() / assertIsAdmin()   │
+│      Never trust client-sent userId — use getUser().id   │
+│  3c. Database RLS policies: enforced by Postgres         │
+│      Even service-role bypass is restricted to admin.ts  │
 └──────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────┐
@@ -767,12 +873,14 @@ pnpm dev
 
 ### Secret Management
 
-| Secret | Where Stored | Rotation |
+| Secret | Where Stored | Notes |
 |---|---|---|
-| `NEXTAUTH_SECRET` | Vercel env var | Rotate every 90 days (invalidates all sessions) |
-| `DATABASE_URL` | Vercel env var | Rotate via Supabase dashboard if compromised |
-| `GOOGLE_CLIENT_SECRET` | Vercel env var | Rotate via Google Cloud Console |
-| `RESEND_API_KEY` | Vercel env var | Rotate via Resend dashboard |
+| `NEXT_PUBLIC_SUPABASE_URL` | Vercel env var (public) | Safe to expose — identifies project only |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Vercel env var (public) | Safe to expose — RLS restricts what it can access |
+| `SUPABASE_SERVICE_ROLE_KEY` | Vercel env var (server-only) | Bypasses RLS — import only in `lib/supabase/admin.ts`; never in client code |
+| `DATABASE_URL` | Vercel env var (server-only) | Rotate via Supabase dashboard if compromised |
+| `DIRECT_URL` | Vercel env var (server-only) | Used only by Prisma migrations |
+| `RESEND_API_KEY` | Vercel env var (server-only) | Rotate via Resend dashboard |
 
 ---
 
@@ -843,10 +951,15 @@ pnpm dev
 **Rationale:** Eliminates an external service dependency. Postgres FTS handles up to ~1M contacts comfortably. Adding Elasticsearch would add cost, operational complexity, and sync lag.
 **Trade-off:** Less sophisticated relevance tuning and no fuzzy matching (mitigated by `pg_trgm` for short-string fields like deal titles).
 
-### ADR-004: NextAuth JWT Sessions over Database Sessions
-**Decision:** JWT stored in HttpOnly cookie; no session table.
-**Rationale:** Stateless — no DB round-trip on every request to validate session. Vercel serverless functions are stateless by nature, making database sessions operationally awkward.
-**Trade-off:** Cannot instantly revoke sessions server-side (JWT is valid until expiry). Mitigated by short expiry (30 days default) and ability to rotate `NEXTAUTH_SECRET` to invalidate all sessions in an emergency.
+### ADR-004: Supabase Auth over NextAuth.js
+**Decision:** Use Supabase Auth (via `@supabase/ssr`) for all authentication instead of NextAuth.js.
+**Rationale:** Supabase Auth is co-located with the database — user identities in `auth.users` can be directly referenced in RLS policies via `auth.uid()`, eliminating the need for a separate session join. It also provides a managed admin dashboard for user management, built-in OAuth providers, magic links, and brute-force protection without any custom code. The `@supabase/ssr` package provides first-class Next.js App Router support with automatic cookie-based session refresh.
+**Trade-off:** Less flexibility than NextAuth for custom session shapes. CRM-specific user metadata (role, team) must be fetched from the `profiles` table rather than being embedded in the JWT. Mitigated by caching the profile in the session context and fetching it only on write operations that need role checks.
+
+### ADR-007: Supabase as Full Backend Platform
+**Decision:** Use Supabase for Auth, Database, Storage, and Realtime — not just as a managed Postgres host.
+**Rationale:** Using the full Supabase platform reduces the number of external services from 4+ (database host, auth provider, file storage, realtime service) to 1. RLS policies enforce security at the database level rather than relying solely on application-layer checks. Supabase Realtime enables live Kanban updates without a separate WebSocket service (e.g. Pusher) or polling.
+**Trade-off:** Tighter coupling to a single vendor. Migration away from Supabase in the future would require replacing Auth, Storage, and Realtime simultaneously. Acceptable given Supabase is open-source (self-hostable) and the alternatives (multiple vendors) add more operational complexity than the lock-in risk.
 
 ### ADR-005: Soft Deletes (Archive) over Hard Deletes
 **Decision:** Contacts and Deals are archived (`isArchived = true`) rather than deleted.

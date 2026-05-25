@@ -50,11 +50,12 @@ Simple CRM is a web-based customer relationship management application designed 
 |---|---|---|
 | API | Next.js Route Handlers | `/app/api/**` — no separate server process |
 | ORM | Prisma | 5.x — type-safe DB access, migrations |
-| Database | PostgreSQL | 15.x |
-| Auth | NextAuth.js | 4.x — sessions, email/password, OAuth providers |
+| Database | PostgreSQL 15 (via Supabase) | Managed, with pgBouncer connection pooling |
+| Auth | Supabase Auth | Email/password, magic link, OAuth; session via `@supabase/ssr` cookies |
+| Realtime | Supabase Realtime | Live Kanban updates; DB change subscriptions (Phase 2) |
+| File Storage | Supabase Storage | Avatars bucket (Phase 1); attachments bucket (Phase 3) |
 | Validation | Zod | Shared schemas between client and server |
-| Background Jobs | None (Phase 1); consider Trigger.dev (Phase 3) | |
-| File Storage | None (Phase 1); Supabase Storage (Phase 3) | |
+| Background Jobs | Supabase Edge Functions | Async tasks (email digests, sync jobs) — Phase 3 |
 | Email | Resend (Phase 3) | Transactional email + CRM email logging |
 
 ### Infrastructure
@@ -62,8 +63,9 @@ Simple CRM is a web-based customer relationship management application designed 
 | Concern | Service | Notes |
 |---|---|---|
 | Frontend/API Hosting | Vercel | Automatic preview deploys per branch |
-| Database | Supabase (managed Postgres) or Railway | Supabase preferred: built-in connection pooling via pgBouncer |
-| Connection Pooler | Supabase pgBouncer or PgBouncer on Railway | Required for serverless Vercel functions |
+| Backend Platform | Supabase | Auth, Database, Storage, Realtime — single project per environment |
+| Connection Pooler | Supabase pgBouncer (built-in) | Transaction mode for serverless functions; session mode for migrations |
+| Local Dev | Supabase CLI (`supabase start`) | Docker-based local stack mirrors production exactly |
 | Environment Config | Vercel Environment Variables | Separate dev/preview/prod sets |
 | Error Monitoring | Sentry | |
 | Analytics | Vercel Analytics | |
@@ -75,12 +77,15 @@ Simple CRM is a web-based customer relationship management application designed 
 - **Git hooks:** Husky + lint-staged (lint + type-check on commit)
 - **Testing:** Vitest (unit) + Playwright (e2e, Phase 2)
 - **Database seeding:** Prisma seed script with Faker.js
+- **Local Supabase:** `supabase start` (Docker) — runs Auth, DB, Storage, Realtime locally
 
 ---
 
 ## 3. Core Entities & Data Model
 
 ### 3.1 Prisma Schema
+
+> **Supabase note:** All IDs use `uuid()` to align with Supabase Auth's `auth.users.id` (UUID). The `profiles` table extends `auth.users` — Supabase Auth owns email/password/OAuth; we never store passwords in app tables. Row Level Security (RLS) policies are defined separately in `supabase/migrations/` (see §8.3).
 
 ```prisma
 // prisma/schema.prisma
@@ -91,8 +96,8 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL") // for migrations; non-pooled
+  url       = env("DATABASE_URL")    // pgBouncer (transaction mode) — app queries
+  directUrl = env("DIRECT_URL")      // direct connection — migrations only
 }
 
 // ─────────────────────────────────────────────
@@ -151,78 +156,34 @@ enum CompanySize {
 }
 
 // ─────────────────────────────────────────────
-// USER
+// PROFILE
+// Extends auth.users (managed by Supabase Auth).
+// A Postgres trigger auto-creates a Profile row
+// whenever a user signs up via Supabase Auth.
 // ─────────────────────────────────────────────
 
-model User {
-  id            String    @id @default(cuid())
-  name          String
-  email         String    @unique
-  emailVerified DateTime?
-  image         String?
-  passwordHash  String?   // null if OAuth-only
-  role          Role      @default(USER)
-  team          String?   // free-text team/department label
-  isActive      Boolean   @default(true)
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  // NextAuth relations
-  accounts      Account[]
-  sessions      Session[]
+model Profile {
+  // id mirrors auth.users.id — UUID assigned by Supabase Auth
+  id        String   @id @db.Uuid
+  email     String   @unique
+  fullName  String?
+  avatarUrl String?  // Supabase Storage public URL
+  role      Role     @default(USER)
+  team      String?  // free-text team/department label
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // CRM relations
-  ownedContacts   Contact[]  @relation("ContactOwner")
-  ownedDeals      Deal[]     @relation("DealOwner")
-  assignedTasks   Task[]     @relation("TaskAssignee")
-  activities      Activity[] @relation("ActivityCreator")
-  auditLogs       AuditLog[]
+  ownedContacts Contact[]  @relation("ContactOwner")
+  ownedDeals    Deal[]     @relation("DealOwner")
+  assignedTasks Task[]     @relation("TaskAssignee")
+  activities    Activity[] @relation("ActivityCreator")
+  auditLogs     AuditLog[]
 
   @@index([email])
   @@index([role])
-  @@map("users")
-}
-
-// ─────────────────────────────────────────────
-// NEXTAUTH SUPPORT TABLES
-// ─────────────────────────────────────────────
-
-model Account {
-  id                String  @id @default(cuid())
-  userId            String
-  type              String
-  provider          String
-  providerAccountId String
-  refresh_token     String? @db.Text
-  access_token      String? @db.Text
-  expires_at        Int?
-  token_type        String?
-  scope             String?
-  id_token          String? @db.Text
-  session_state     String?
-  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@unique([provider, providerAccountId])
-  @@map("accounts")
-}
-
-model Session {
-  id           String   @id @default(cuid())
-  sessionToken String   @unique
-  userId       String
-  expires      DateTime
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("sessions")
-}
-
-model VerificationToken {
-  identifier String
-  token      String   @unique
-  expires    DateTime
-
-  @@unique([identifier, token])
-  @@map("verification_tokens")
+  @@map("profiles")
 }
 
 // ─────────────────────────────────────────────
@@ -230,7 +191,7 @@ model VerificationToken {
 // ─────────────────────────────────────────────
 
 model Tag {
-  id        String   @id @default(cuid())
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name      String   @unique
   color     String   @default("#6366f1") // hex color for UI badge
   createdAt DateTime @default(now())
@@ -247,7 +208,7 @@ model Tag {
 // ─────────────────────────────────────────────
 
 model Company {
-  id          String       @id @default(cuid())
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name        String
   domain      String?      @unique // e.g. "acme.com"
   industry    String?
@@ -279,8 +240,8 @@ model Company {
 }
 
 model CompanyTag {
-  companyId String
-  tagId     String
+  companyId String  @db.Uuid
+  tagId     String  @db.Uuid
   company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
@@ -293,14 +254,14 @@ model CompanyTag {
 // ─────────────────────────────────────────────
 
 model Contact {
-  id          String   @id @default(cuid())
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   firstName   String
   lastName    String
   email       String?
   phone       String?
   jobTitle    String?
-  companyId   String?
-  ownerId     String
+  companyId   String?  @db.Uuid
+  ownerId     String   @db.Uuid  // references profiles.id
   linkedInUrl String?
   avatarUrl   String?
   notes       String?  @db.Text
@@ -309,7 +270,7 @@ model Contact {
   updatedAt   DateTime @updatedAt
 
   company      Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  owner        User          @relation("ContactOwner", fields: [ownerId], references: [id])
+  owner        Profile       @relation("ContactOwner", fields: [ownerId], references: [id])
   tags         ContactTag[]
   deals        Deal[]        @relation("DealPrimaryContact")
   dealContacts DealContact[]
@@ -328,8 +289,8 @@ model Contact {
 }
 
 model ContactTag {
-  contactId String
-  tagId     String
+  contactId String  @db.Uuid
+  tagId     String  @db.Uuid
   contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
   tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
@@ -342,16 +303,16 @@ model ContactTag {
 // ─────────────────────────────────────────────
 
 model Deal {
-  id               String    @id @default(cuid())
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   title            String
   value            Decimal?  @db.Decimal(15, 2)
   currency         Currency  @default(USD)
   stage            DealStage @default(LEAD)
   probability      Int?      // 0–100, auto-set by stage default or manual
   closeDate        DateTime?
-  primaryContactId String?
-  companyId        String?
-  ownerId          String
+  primaryContactId String?   @db.Uuid
+  companyId        String?   @db.Uuid
+  ownerId          String    @db.Uuid  // references profiles.id
   description      String?   @db.Text
   isArchived       Boolean   @default(false)
   wonAt            DateTime? // set when stage → CLOSED_WON
@@ -363,7 +324,7 @@ model Deal {
 
   primaryContact Contact?          @relation("DealPrimaryContact", fields: [primaryContactId], references: [id], onDelete: SetNull)
   company        Company?          @relation(fields: [companyId], references: [id], onDelete: SetNull)
-  owner          User              @relation("DealOwner", fields: [ownerId], references: [id])
+  owner          Profile           @relation("DealOwner", fields: [ownerId], references: [id])
   contacts       DealContact[]
   activities     Activity[]
   tasks          Task[]
@@ -379,8 +340,8 @@ model Deal {
 
 // Many-to-many: additional contacts on a deal
 model DealContact {
-  dealId    String
-  contactId String
+  dealId    String  @db.Uuid
+  contactId String  @db.Uuid
   role      String? // e.g. "Decision Maker", "Champion"
   deal      Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
   contact   Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
@@ -391,12 +352,12 @@ model DealContact {
 
 // Audit trail for pipeline stage transitions
 model DealStageHistory {
-  id        String     @id @default(cuid())
-  dealId    String
+  id        String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dealId    String     @db.Uuid
   fromStage DealStage?
   toStage   DealStage
   changedAt DateTime   @default(now())
-  changedBy String?    // userId
+  changedBy String?    @db.Uuid  // profiles.id
 
   deal      Deal       @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
@@ -409,20 +370,20 @@ model DealStageHistory {
 // ─────────────────────────────────────────────
 
 model Activity {
-  id          String       @id @default(cuid())
+  id          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   type        ActivityType
   subject     String?      // short headline
   body        String?      @db.Text
   occurredAt  DateTime     @default(now())
-  contactId   String?
-  dealId      String?
-  createdById String
+  contactId   String?      @db.Uuid
+  dealId      String?      @db.Uuid
+  createdById String       @db.Uuid  // references profiles.id
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
 
   contact     Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
   deal        Deal?     @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  createdBy   User      @relation("ActivityCreator", fields: [createdById], references: [id])
+  createdBy   Profile   @relation("ActivityCreator", fields: [createdById], references: [id])
 
   @@index([contactId])
   @@index([dealId])
@@ -437,23 +398,23 @@ model Activity {
 // ─────────────────────────────────────────────
 
 model Task {
-  id           String       @id @default(cuid())
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   title        String
   description  String?      @db.Text
   dueDate      DateTime?
   priority     TaskPriority @default(MEDIUM)
   status       TaskStatus   @default(OPEN)
-  contactId    String?
-  dealId       String?
-  assignedToId String
-  createdById  String
+  contactId    String?      @db.Uuid
+  dealId       String?      @db.Uuid
+  assignedToId String       @db.Uuid  // references profiles.id
+  createdById  String       @db.Uuid  // references profiles.id
   completedAt  DateTime?
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
   contact    Contact?  @relation(fields: [contactId], references: [id], onDelete: SetNull)
   deal       Deal?     @relation(fields: [dealId], references: [id], onDelete: SetNull)
-  assignedTo User      @relation("TaskAssignee", fields: [assignedToId], references: [id])
+  assignedTo Profile   @relation("TaskAssignee", fields: [assignedToId], references: [id])
 
   @@index([assignedToId])
   @@index([status])
@@ -468,17 +429,17 @@ model Task {
 // ─────────────────────────────────────────────
 
 model AuditLog {
-  id        String   @id @default(cuid())
-  userId    String?
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String?  @db.Uuid  // references profiles.id
   action    String   // CREATE | UPDATE | DELETE
   entity    String   // "Contact" | "Deal" | etc.
-  entityId  String
+  entityId  String   @db.Uuid
   changes   Json?    // diff object: { field: [oldValue, newValue] }
   ipAddress String?
   userAgent String?
   createdAt DateTime @default(now())
 
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user      Profile? @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([entity, entityId])
   @@index([userId])
@@ -498,7 +459,33 @@ model AuditLog {
 | CLOSED_WON | 100% |
 | CLOSED_LOST | 0% |
 
-### 3.3 Full-Text Search Setup
+### 3.3 Supabase Auth → Profile Trigger
+
+A Postgres function + trigger automatically creates a `profiles` row whenever a user signs up via Supabase Auth. Applied via a Supabase migration (not Prisma):
+
+```sql
+-- supabase/migrations/20240101000000_create_profile_trigger.sql
+
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger AS $$
+BEGIN
+  INSERT INTO public.profiles (id, email, full_name, avatar_url)
+  VALUES (
+    NEW.id,
+    NEW.email,
+    NEW.raw_user_meta_data->>'full_name',
+    NEW.raw_user_meta_data->>'avatar_url'
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+```
+
+### 3.4 Full-Text Search Setup
 
 Two PostgreSQL triggers (applied via raw Prisma migration) maintain `tsvector` columns:
 
@@ -700,10 +687,14 @@ type PaginationMeta = {
 
 ### 5.1 Auth Routes
 
+Auth is handled entirely by **Supabase Auth** — no custom auth route handlers needed for sign-in, sign-up, OAuth, or magic links. Supabase provides client-side methods and handles all token/session lifecycle.
+
 | Method | Path | Description | Auth |
 |---|---|---|---|
-| POST | `/api/auth/[...nextauth]` | NextAuth handler | Public |
-| POST | `/api/auth/register` | Create first admin account (env-guarded) | Public |
+| POST | `/api/auth/callback` | OAuth callback handler — exchanges code for session via `@supabase/ssr` | Public |
+| POST | `/api/auth/confirm` | Email confirmation / magic-link token exchange | Public |
+
+> Sign-in, sign-up, password reset, and OAuth redirects are initiated client-side via `supabase.auth.signInWithPassword()`, `supabase.auth.signInWithOAuth()`, etc. — no custom API routes required.
 
 ### 5.2 User Routes
 
@@ -991,28 +982,85 @@ const where = cursor
 
 ### 8.2 Server-Side Enforcement
 
+Route handlers verify the Supabase session and enforce ownership before any write:
+
 ```typescript
 // lib/permissions.ts
 export function assertCanEdit(
-  session: Session,
+  userId: string,
+  userRole: Role,
   record: { ownerId?: string; createdById?: string }
 ): void {
-  if (session.user.role === 'ADMIN') return
-  const userId = session.user.id
+  if (userRole === 'ADMIN') return
   if (record.ownerId !== userId && record.createdById !== userId) {
     throw new ForbiddenError('You do not have permission to edit this record')
   }
 }
 ```
 
-`middleware.ts` protects all `/dashboard`, `/contacts`, `/companies`, `/deals`, `/tasks`, `/activities`, `/settings` routes — unauthenticated users redirected to `/login`.
+`middleware.ts` uses `@supabase/ssr`'s `updateSession()` to validate the Supabase Auth cookie on every request — unauthenticated users are redirected to `/login`.
 
-Admin-only settings pages (`/settings/users`, `/settings/tags`, `/settings/pipeline`) check `role === ADMIN` in the page component and return 403 otherwise.
+Admin-only settings pages (`/settings/users`, `/settings/tags`, `/settings/pipeline`) check `role === ADMIN` in the page component via the user's `profiles` row and return 403 otherwise.
 
-### 8.3 Row-Level Visibility
+### 8.3 Row-Level Security (RLS) Policies
 
-Phase 1: All authenticated users can view all records (no per-record visibility restriction).
-Phase 3 enhancement: team-scoped visibility where users only see records owned by their team.
+Supabase RLS is enabled on all CRM tables as a **second layer of defense**. Even if the Next.js API layer is bypassed, the database itself enforces access rules. Policies are defined in `supabase/migrations/` and applied via `supabase db push`.
+
+```sql
+-- Enable RLS on all tables
+ALTER TABLE profiles    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE contacts    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE companies   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE deals       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE activities  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tasks       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs  ENABLE ROW LEVEL SECURITY;
+
+-- Profiles: users can read all, only update their own
+CREATE POLICY "profiles_select_all" ON profiles
+  FOR SELECT USING (auth.role() = 'authenticated');
+
+CREATE POLICY "profiles_update_own" ON profiles
+  FOR UPDATE USING (auth.uid() = id);
+
+-- Contacts: all authenticated users can read; only owner or admin can write
+CREATE POLICY "contacts_select_all" ON contacts
+  FOR SELECT USING (auth.role() = 'authenticated');
+
+CREATE POLICY "contacts_insert_authenticated" ON contacts
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "contacts_update_own_or_admin" ON contacts
+  FOR UPDATE USING (
+    auth.uid() = owner_id
+    OR EXISTS (
+      SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'ADMIN'
+    )
+  );
+
+CREATE POLICY "contacts_delete_own_or_admin" ON contacts
+  FOR DELETE USING (
+    auth.uid() = owner_id
+    OR EXISTS (
+      SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'ADMIN'
+    )
+  );
+
+-- Same pattern applied to: companies, deals, activities, tasks
+-- Audit logs: insert for all authenticated; select for admins only
+CREATE POLICY "audit_logs_insert" ON audit_logs
+  FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+CREATE POLICY "audit_logs_select_admin" ON audit_logs
+  FOR SELECT USING (
+    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'ADMIN')
+  );
+```
+
+### 8.4 Row-Level Visibility
+
+Phase 1: All authenticated users can view all records (RLS SELECT policies are open to all authenticated users).
+Phase 3 enhancement: team-scoped visibility — add `team` column check to RLS SELECT policies so users only see records owned by their team.
 
 ---
 
@@ -1077,13 +1125,14 @@ prisma.$use(async (params, next) => {
 
 ### 9.5 Security
 
-- Passwords hashed with bcrypt (cost factor 12)
-- CSRF protection via NextAuth built-in
+- **Auth security handled by Supabase Auth** — password hashing (bcrypt), brute-force protection, secure token storage, and PKCE for OAuth flows
+- **Row Level Security (RLS)** enforced at the database level as a second authorization layer (§8.3)
+- CSRF protection: Supabase Auth uses PKCE + `@supabase/ssr` HttpOnly cookies
 - All input validated and sanitized with Zod before DB access
 - SQL injection: prevented by Prisma parameterized queries; raw queries use `Prisma.sql` tagged template
-- Rate limiting on auth routes: 10 requests/minute per IP (via `@upstash/ratelimit` + Vercel KV)
+- Rate limiting on auth routes: handled by Supabase Auth (built-in); additional app-level rate limiting on write endpoints via `@upstash/ratelimit` + Vercel KV (Phase 3)
 - Security headers via `next.config.js` `headers()` (`Content-Security-Policy`, `X-Frame-Options`, etc.)
-- Secrets never exposed to client bundle; `NEXTAUTH_SECRET` rotated periodically
+- `SUPABASE_SERVICE_ROLE_KEY` never exposed to client bundle — only used server-side in route handlers
 
 ### 9.6 Error Handling
 
@@ -1215,16 +1264,19 @@ simple-crm/
 │       └── UpcomingTasks.tsx
 │
 ├── lib/
+│   ├── supabase/
+│   │   ├── server.ts                   # createServerClient() — for RSC, Route Handlers, middleware
+│   │   ├── client.ts                   # createBrowserClient() — for Client Components
+│   │   └── admin.ts                    # createAdminClient() — service role, server-only
 │   ├── prisma.ts                       # Prisma client singleton + audit middleware
-│   ├── auth.ts                         # NextAuth config (providers, callbacks, session)
-│   ├── permissions.ts                  # Role/ownership checks
+│   ├── permissions.ts                  # assertCanEdit(), assertIsAdmin()
 │   ├── validations/
 │   │   ├── contact.ts                  # Zod schemas
 │   │   ├── company.ts
 │   │   ├── deal.ts
 │   │   ├── activity.ts
 │   │   ├── task.ts
-│   │   └── user.ts
+│   │   └── profile.ts
 │   ├── api/
 │   │   ├── response.ts                 # Typed success/error response helpers
 │   │   ├── pagination.ts               # Cursor encode/decode helpers
@@ -1240,21 +1292,29 @@ simple-crm/
 │   ├── useTasks.ts
 │   ├── useActivities.ts
 │   ├── useSearch.ts                    # Global search with debounce
-│   ├── useCurrentUser.ts
+│   ├── useCurrentUser.ts               # Reads Supabase Auth session + profiles row
+│   ├── useRealtimeDeals.ts             # Supabase Realtime subscription for Kanban (Phase 2)
 │   └── useFilters.ts                   # nuqs-based URL filter state
 │
 ├── types/
 │   ├── index.ts
 │   ├── api.ts                          # API request/response types
 │   ├── entities.ts                     # Extended entity types (Prisma + computed fields)
-│   └── next-auth.d.ts                  # Module augmentation for session type
+│   └── supabase.ts                     # Generated Supabase DB types (via supabase gen types)
 │
 ├── prisma/
 │   ├── schema.prisma
 │   ├── seed.ts                         # Dev seed (Faker.js — 50 contacts, 10 companies)
-│   └── migrations/
+│   └── migrations/                     # Prisma-managed migrations (schema changes)
 │
-├── middleware.ts                       # Auth route protection
+├── supabase/
+│   ├── config.toml                     # Supabase CLI project config
+│   └── migrations/                     # Supabase-managed migrations (RLS, triggers, extensions)
+│       ├── 20240101000000_create_profile_trigger.sql
+│       ├── 20240101000001_enable_rls.sql
+│       └── 20240101000002_rls_policies.sql
+│
+├── middleware.ts                       # Supabase Auth session refresh + route protection
 ├── next.config.js
 ├── tailwind.config.ts
 ├── tsconfig.json
@@ -1273,11 +1333,15 @@ simple-crm/
 
 **Week 1 — Foundation:**
 - Initialize Next.js 14 project (TypeScript, Tailwind, shadcn/ui, pnpm)
-- Configure Prisma + PostgreSQL (Supabase local dev with `supabase start`)
-- Implement full Prisma schema (all models, even if not yet exposed in UI)
-- Run initial migration; write seed script
-- Implement NextAuth with email/password; `/login`, `/register` pages
-- Auth middleware protecting all app routes
+- Initialize Supabase project (local: `supabase init` + `supabase start`)
+- Configure Prisma pointing to Supabase PostgreSQL (`DATABASE_URL` + `DIRECT_URL`)
+- Implement full Prisma schema (all models); run initial migration (`prisma migrate dev`)
+- Apply Supabase migrations: profile trigger, RLS enable, RLS policies
+- Configure `@supabase/ssr` — `lib/supabase/server.ts`, `client.ts`, `middleware.ts`
+- Implement auth pages (`/login`, `/register`) using `supabase.auth.signInWithPassword()` / `signUp()`
+- `middleware.ts` using `updateSession()` — protects all `/(dashboard)` routes
+- Set up Supabase Storage: create `avatars` bucket (public) and `attachments` bucket (private)
+- Write seed script; run `prisma db seed`
 
 **Week 2 — Contacts:**
 - `GET/POST /api/contacts` with full filter/sort/cursor pagination
@@ -1328,14 +1392,15 @@ simple-crm/
 - Wire tasks into contact detail + deal detail
 - Dashboard: connect live pipeline summary + upcoming tasks
 
-**Week 8 — Integration + Polish:**
+**Week 8 — Realtime + Polish:**
+- **Supabase Realtime:** `useRealtimeDeals()` hook — subscribe to `deals` table changes; live Kanban updates across all connected users without polling
 - Playwright e2e tests for critical paths (login, create contact, create deal, move stage)
-- Settings: Users management (admin — invite, role change, deactivate)
+- Settings: Users management (admin — invite via `supabase.auth.admin.inviteUserByEmail()`, role change, deactivate)
 - Settings: Pipeline stage configuration
 - Audit log viewer in Settings (admin)
 - Performance audit: check p95 on list pages; add missing indexes
 
-**Exit criteria:** Full deal lifecycle from Lead to Closed Won; activities logged; tasks tracked.
+**Exit criteria:** Full deal lifecycle from Lead to Closed Won; activities logged; tasks tracked; live Kanban updates working.
 
 ---
 
@@ -1368,9 +1433,8 @@ simple-crm/
 - "Schedule Meeting" action from Contact/Deal detail
 
 **Week 13 — Notifications:**
-- In-app notification bell (task due reminders, deal stage changes)
-- Email notifications via Resend (daily digest of overdue tasks)
-- Supabase Realtime or Pusher for live Kanban updates across team members
+- In-app notification bell (task due reminders, deal stage changes) — built on Supabase Realtime
+- Email notifications via Resend (daily digest of overdue tasks) — triggered by Supabase Edge Function on cron schedule
 
 **Week 14 — Hardening:**
 - Security review: rate limiting on all write endpoints, input sanitization audit
@@ -1393,7 +1457,8 @@ simple-crm/
     "react-dom": "18.x",
     "typescript": "5.x",
     "@prisma/client": "5.x",
-    "next-auth": "4.x",
+    "@supabase/supabase-js": "2.x",
+    "@supabase/ssr": "0.x",
     "zod": "3.x",
     "react-hook-form": "7.x",
     "@hookform/resolvers": "3.x",
@@ -1409,11 +1474,11 @@ simple-crm/
     "lucide-react": "latest",
     "recharts": "2.x",
     "date-fns": "3.x",
-    "bcryptjs": "2.x",
     "sonner": "1.x"
   },
   "devDependencies": {
     "prisma": "5.x",
+    "supabase": "1.x",
     "@faker-js/faker": "8.x",
     "vitest": "1.x",
     "@playwright/test": "1.x",
@@ -1432,33 +1497,36 @@ simple-crm/
 ```bash
 # .env.example
 
-# Database (pooled — for app queries via pgBouncer)
-DATABASE_URL="postgresql://user:pass@host:5432/simple_crm?pgbouncer=true&connect_timeout=10"
+# ─── Supabase ──────────────────────────────────────────────────────────────────
+# Public keys — safe to expose to the browser
+NEXT_PUBLIC_SUPABASE_URL="https://<project-ref>.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="<anon-key>"
 
-# Database (direct — for Prisma migrations, bypasses pooler)
-DIRECT_URL="postgresql://user:pass@host:5432/simple_crm"
+# Service role key — SERVER ONLY, never expose to client
+# Used for admin operations (invite user, bypass RLS)
+SUPABASE_SERVICE_ROLE_KEY="<service-role-key>"
 
-# NextAuth
-NEXTAUTH_URL="http://localhost:3000"
-NEXTAUTH_SECRET=""  # generate with: openssl rand -base64 32
+# ─── Database (Prisma) ─────────────────────────────────────────────────────────
+# Pooled connection via pgBouncer — used by the running app
+DATABASE_URL="postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres?pgbouncer=true&connect_timeout=10"
 
-# OAuth providers (optional — Phase 3)
-GOOGLE_CLIENT_ID=""
-GOOGLE_CLIENT_SECRET=""
+# Direct connection — used only by prisma migrate (bypasses pgBouncer)
+DIRECT_URL="postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
 
-# Email (Phase 3)
+# ─── OAuth providers (optional — Phase 3) ─────────────────────────────────────
+# Configure in Supabase Dashboard → Auth → Providers
+# (no env vars needed in app — Supabase handles the OAuth flow)
+
+# ─── Email (Phase 3) ───────────────────────────────────────────────────────────
 RESEND_API_KEY=""
 
-# Error monitoring
+# ─── Error monitoring ──────────────────────────────────────────────────────────
 NEXT_PUBLIC_SENTRY_DSN=""
 
-# Rate limiting (Phase 3)
+# ─── Rate limiting (Phase 3) ──────────────────────────────────────────────────
 UPSTASH_REDIS_REST_URL=""
 UPSTASH_REDIS_REST_TOKEN=""
-
-# Feature flags
-NEXT_PUBLIC_ENABLE_OAUTH="false"
-ALLOW_REGISTRATION="true"   # Set false after first admin account is created
 ```
 
 > **Important:** Commit `.env.example` to the repository. Add `.env.local` to `.gitignore`.
+> The `SUPABASE_SERVICE_ROLE_KEY` bypasses RLS — only import it in server-side files (`lib/supabase/admin.ts`). Never reference it in client components or expose it in the browser bundle.
