@@ -75,7 +75,7 @@ export function TopNav({ userFullName, userEmail, userAvatarUrl }: TopNavProps) 
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
-              <Link href="/dashboard/settings/profile">Profile settings</Link>
+              <Link href="/settings/profile">Profile settings</Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem

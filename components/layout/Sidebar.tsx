@@ -26,13 +26,13 @@ import {
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard/contacts", label: "Contacts", icon: Users },
-  { href: "/dashboard/companies", label: "Companies", icon: Building2 },
+  { href: "/contacts", label: "Contacts", icon: Users },
+  { href: "/companies", label: "Companies", icon: Building2 },
 ];
 
 const bottomItems = [
-  { href: "/dashboard/settings/tags", label: "Tags", icon: Tag },
-  { href: "/dashboard/settings/profile", label: "Settings", icon: Settings },
+  { href: "/settings/tags", label: "Tags", icon: Tag },
+  { href: "/settings/profile", label: "Settings", icon: Settings },
 ];
 
 export function Sidebar() {
