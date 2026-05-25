@@ -180,9 +180,9 @@ export function CompaniesTable({ initialData }: CompaniesTableProps) {
             </div>
 
             <Select
-              value={filters.tagId ?? ""}
+              value={filters.tagId ?? "all"}
               onValueChange={(val) => {
-                setFilter("tagId", val || undefined);
+                setFilter("tagId", val === "all" ? undefined : val);
                 setFilter("cursor", undefined);
                 setCursorStack([]);
               }}
@@ -191,7 +191,7 @@ export function CompaniesTable({ initialData }: CompaniesTableProps) {
                 <SelectValue placeholder="Filter by tag" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">All tags</SelectItem>
+                <SelectItem value="all">All tags</SelectItem>
                 {tagsData?.map((tag) => (
                   <SelectItem key={tag.id} value={tag.id}>
                     {tag.name}
