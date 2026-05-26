@@ -45,13 +45,7 @@ export default async function DashboardPage() {
           contact: { select: { id: true, firstName: true, lastName: true } },
         },
       }),
-    ]).catch((e: unknown) => {
-      const err = e as Record<string, unknown>;
-      console.error("[DB:code]", err?.code);
-      console.error("[DB:msg]", err?.message);
-      console.error("[DB:meta]", JSON.stringify(err?.meta));
-      throw e;
-    });
+    ]);
 
   type PipelineRow = { _count: { id: number }; _sum: { value: unknown } };
   const totalDeals = (pipeline as PipelineRow[]).reduce(
