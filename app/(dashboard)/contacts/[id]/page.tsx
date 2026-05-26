@@ -170,7 +170,7 @@ export default async function ContactDetailPage({
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap gap-2">
-                  {contact.tags.map(({ tag }) => (
+                  {contact.tags.map(({ tag }: { tag: { id: string; name: string; color: string } }) => (
                     <TagBadge key={tag.id} name={tag.name} color={tag.color} />
                   ))}
                 </div>
@@ -206,7 +206,7 @@ export default async function ContactDetailPage({
               </CardHeader>
               <CardContent>
                 <ul className="space-y-2">
-                  {contact.deals.map(({ deal }) => (
+                  {contact.deals.map(({ deal }: { deal: { id: string; title: string; stage: string; value: unknown; currency: string | null } }) => (
                     <li
                       key={deal.id}
                       className="flex items-center justify-between rounded-md border px-3 py-2"
@@ -231,7 +231,7 @@ export default async function ContactDetailPage({
               </CardHeader>
               <CardContent>
                 <ul className="space-y-2">
-                  {contact.tasks.map((task) => (
+                  {contact.tasks.map((task: { id: string; title: string; priority: string; dueDate: Date | null }) => (
                     <li
                       key={task.id}
                       className="flex items-center justify-between rounded-md border px-3 py-2"
@@ -267,7 +267,7 @@ export default async function ContactDetailPage({
                 </p>
               ) : (
                 <ol className="space-y-4">
-                  {contact.activities.map((activity, idx) => (
+                  {contact.activities.map((activity: { id: string; subject: string; type: string; body: string | null; occurredAt: Date; createdBy: { id: string; fullName: string | null } | null }, idx: number) => (
                     <li key={activity.id} className="flex items-start gap-3">
                       <div className="flex flex-col items-center">
                         <div className="h-2 w-2 rounded-full bg-primary mt-1.5" />

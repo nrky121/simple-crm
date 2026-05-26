@@ -182,7 +182,14 @@ export default async function CompanyDetailPage({
                 </p>
               ) : (
                 <ul className="divide-y">
-                  {company.contacts.map((contact) => (
+                  {company.contacts.map((contact: {
+                      id: string;
+                      firstName: string;
+                      lastName: string | null;
+                      title: string | null;
+                      owner: { id: string; fullName: string | null } | null;
+                      tags: { tag: { id: string; name: string; color: string } }[];
+                    }) => (
                     <li
                       key={contact.id}
                       className="flex items-center justify-between py-2"
@@ -201,7 +208,7 @@ export default async function CompanyDetailPage({
                         )}
                       </div>
                       <div className="flex items-center gap-2">
-                        {contact.tags.slice(0, 2).map(({ tag }) => (
+                        {contact.tags.slice(0, 2).map(({ tag }: { tag: { id: string; name: string; color: string } }) => (
                           <TagBadge
                             key={tag.id}
                             name={tag.name}
