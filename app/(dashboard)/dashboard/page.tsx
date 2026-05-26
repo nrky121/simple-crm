@@ -47,11 +47,12 @@ export default async function DashboardPage() {
       }),
     ]);
 
-  const totalDeals = pipeline.reduce(
+  type PipelineRow = { _count: { id: number }; _sum: { value: unknown } };
+  const totalDeals = (pipeline as PipelineRow[]).reduce(
     (sum, s) => sum + s._count.id,
     0
   );
-  const totalPipelineValue = pipeline.reduce(
+  const totalPipelineValue = (pipeline as PipelineRow[]).reduce(
     (sum, s) => sum + Number(s._sum.value ?? 0),
     0
   );
