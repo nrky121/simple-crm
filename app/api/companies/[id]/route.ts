@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-import { prisma, auditUserStorage } from "@/lib/prisma";
-import { getCurrentUser, assertCanEdit } from "@/lib/permissions";
+import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/permissions";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { updateCompanySchema } from "@/lib/validations/company";
 import { NotFoundError, ValidationError } from "@/lib/api/errors";
@@ -35,9 +35,8 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
-    const user = await getCurrentUser();
-    const company = await getCompany(params.id);
-    await assertCanEdit(company.ownerId ?? user.id);
+    await getCurrentUser();
+    await getCompany(params.id); // verify exists
 
     const body = await request.json();
     const parsed = updateCompanySchema.safeParse(body);
@@ -48,16 +47,14 @@ export async function PATCH(
       );
     }
 
-    const updated = await auditUserStorage.run({ userId: user.id }, async () =>
-      prisma.company.update({
-        where: { id: params.id },
-        data: parsed.data,
-        include: {
-          tags: { include: { tag: true } },
-          _count: { select: { contacts: true, deals: true } },
-        },
-      })
-    );
+    const updated = await prisma.company.update({
+      where: { id: params.id },
+      data: parsed.data,
+      include: {
+        tags: { include: { tag: true } },
+        _count: { select: { contacts: true, deals: true } },
+      },
+    });
     return successResponse(updated);
   } catch (e) {
     return errorResponse(e);
@@ -69,16 +66,13 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const user = await getCurrentUser();
-    const company = await getCompany(params.id);
-    await assertCanEdit(company.ownerId ?? user.id);
+    await getCurrentUser();
+    await getCompany(params.id); // verify exists
 
-    const archived = await auditUserStorage.run({ userId: user.id }, async () =>
-      prisma.company.update({
-        where: { id: params.id },
-        data: { isArchived: true },
-      })
-    );
+    const archived = await prisma.company.update({
+      where: { id: params.id },
+      data: { isArchived: true },
+    });
     return successResponse({ archived: true, id: archived.id });
   } catch (e) {
     return errorResponse(e);

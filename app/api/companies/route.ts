@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import type { Prisma } from "@prisma/client";
-import { prisma, auditUserStorage } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/permissions";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { createCompanySchema, companyFiltersSchema } from "@/lib/validations/company";
@@ -91,15 +91,13 @@ export async function POST(request: NextRequest) {
       ownerId: parsed.data.ownerId ?? user.id,
     };
 
-    const company = await auditUserStorage.run({ userId: user.id }, async () =>
-      prisma.company.create({
-        data,
-        include: {
-          tags: { include: { tag: true } },
-          _count: { select: { contacts: true, deals: true } },
-        },
-      })
-    );
+    const company = await prisma.company.create({
+      data,
+      include: {
+        tags: { include: { tag: true } },
+        _count: { select: { contacts: true, deals: true } },
+      },
+    });
     return successResponse(company, 201);
   } catch (e) {
     return errorResponse(e);

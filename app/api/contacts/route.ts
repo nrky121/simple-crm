@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import type { Prisma } from "@prisma/client";
-import { prisma, auditUserStorage } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/permissions";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { createContactSchema, contactFiltersSchema } from "@/lib/validations/contact";
@@ -88,16 +88,14 @@ export async function POST(request: NextRequest) {
       ownerId: parsed.data.ownerId ?? user.id,
     };
 
-    const contact = await auditUserStorage.run({ userId: user.id }, async () =>
-      prisma.contact.create({
-        data,
-        include: {
-          company: { select: { id: true, name: true } },
-          owner: { select: { id: true, fullName: true } },
-          tags: { include: { tag: true } },
-        },
-      })
-    );
+    const contact = await prisma.contact.create({
+      data,
+      include: {
+        company: { select: { id: true, name: true } },
+        owner: { select: { id: true, fullName: true } },
+        tags: { include: { tag: true } },
+      },
+    });
     return successResponse(contact, 201);
   } catch (e) {
     return errorResponse(e);

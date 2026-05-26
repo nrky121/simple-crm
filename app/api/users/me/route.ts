@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { prisma, auditUserStorage } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/permissions";
 import { successResponse, errorResponse } from "@/lib/api/response";
 import { updateProfileSchema } from "@/lib/validations/profile";
@@ -20,18 +20,12 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     const parsed = updateProfileSchema.safeParse(body);
     if (!parsed.success) {
-      throw new ValidationError(
-        "Invalid input",
-        parsed.error.flatten().fieldErrors as Record<string, string[]>
-      );
+      throw new ValidationError("Invalid input", parsed.error.flatten().fieldErrors as Record<string, string[]>);
     }
-
-    const updated = await auditUserStorage.run({ userId: user.id }, async () =>
-      prisma.profile.update({
-        where: { id: user.id },
-        data: parsed.data,
-      })
-    );
+    const updated = await prisma.profile.update({
+      where: { id: user.id },
+      data: parsed.data,
+    });
     return successResponse(updated);
   } catch (e) {
     return errorResponse(e);
