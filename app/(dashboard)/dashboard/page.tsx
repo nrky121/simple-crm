@@ -48,11 +48,11 @@ export default async function DashboardPage() {
     ]);
 
   const totalDeals = pipeline.reduce(
-    (sum: number, s) => sum + s._count.id,
+    (sum, s) => sum + s._count.id,
     0
   );
   const totalPipelineValue = pipeline.reduce(
-    (sum: number, s) => sum + Number(s._sum.value ?? 0),
+    (sum, s) => sum + Number(s._sum.value ?? 0),
     0
   );
   const openTaskCount = upcomingTasks.length;
