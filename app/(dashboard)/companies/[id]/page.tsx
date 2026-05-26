@@ -241,7 +241,7 @@ export default async function CompanyDetailPage({
                 <p className="text-sm text-muted-foreground">No deals yet.</p>
               ) : (
                 <ul className="space-y-2">
-                  {company.deals.map((deal) => (
+                  {company.deals.map((deal: { id: string; title: string; stage: string; value: unknown; currency: string | null; expectedCloseDate: Date | null }) => (
                     <li
                       key={deal.id}
                       className="flex items-center justify-between rounded-md border px-3 py-2"
