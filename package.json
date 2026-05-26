@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
-    "postbuild": "[ -z \"$DATABASE_URL\" ] || prisma migrate deploy",
+    "postbuild": "echo 'Build complete'",
     "start": "next start",
     "lint": "next lint",
     "db:migrate": "prisma migrate dev",
