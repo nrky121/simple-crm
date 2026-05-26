@@ -27,6 +27,8 @@ export function errorResponse(error: unknown) {
     );
   }
 
-  console.error("[API Error]", error);
-  return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  const msg = error instanceof Error ? error.message : String(error);
+  const stack = error instanceof Error ? error.stack : undefined;
+  console.error("[API Error]", msg, stack);
+  return NextResponse.json({ error: "Internal server error", detail: msg }, { status: 500 });
 }
