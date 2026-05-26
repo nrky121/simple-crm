@@ -15,33 +15,25 @@ export default async function DashboardPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const wrap = async <T,>(label: string, p: Promise<T>): Promise<T> => {
-    return p.catch((e: unknown) => {
-      const err = e as Record<string, unknown>;
-      console.error(`[dash:${label}] code:`, err?.code, "msg:", err?.message, "meta:", JSON.stringify(err?.meta));
-      throw e;
-    });
-  };
-
   const [contactCount, companyCount, pipeline, recentActivities, upcomingTasks] =
     await Promise.all([
-      wrap("contact.count", prisma.contact.count({ where: { isArchived: false } })),
-      wrap("company.count", prisma.company.count({ where: { isArchived: false } })),
-      wrap("deal.groupBy", prisma.deal.groupBy({
+      prisma.contact.count({ where: { isArchived: false } }),
+      prisma.company.count({ where: { isArchived: false } }),
+      prisma.deal.groupBy({
         by: ["stage"],
         where: { isArchived: false },
         _count: { id: true },
         _sum: { value: true },
-      })),
-      wrap("activity.findMany", prisma.activity.findMany({
+      }),
+      prisma.activity.findMany({
         take: 10,
         orderBy: { occurredAt: "desc" },
         include: {
           contact: { select: { id: true, firstName: true, lastName: true } },
           createdBy: { select: { id: true, fullName: true } },
         },
-      })),
-      wrap("task.findMany", prisma.task.findMany({
+      }),
+      prisma.task.findMany({
         where: {
           status: { in: ["OPEN", "IN_PROGRESS"] },
           dueDate: { gte: new Date() },
@@ -52,7 +44,7 @@ export default async function DashboardPage() {
           assignee: { select: { id: true, fullName: true } },
           contact: { select: { id: true, firstName: true, lastName: true } },
         },
-      })),
+      }),
     ]);
 
   type PipelineRow = { _count: { id: number }; _sum: { value: unknown } };

@@ -18,14 +18,9 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
-  console.log("[layout] user.id:", user.id, "type:", typeof user.id);
   const profile = await prisma.profile.findUnique({
     where: { id: user.id },
     select: { fullName: true, avatarUrl: true },
-  }).catch((e: unknown) => {
-    const err = e as Record<string, unknown>;
-    console.error("[layout:profile] code:", err?.code, "msg:", err?.message, "meta:", JSON.stringify(err?.meta));
-    return null;
   });
 
   return (
