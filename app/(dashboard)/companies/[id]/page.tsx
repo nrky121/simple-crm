@@ -142,7 +142,7 @@ export default async function CompanyDetailPage({
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap gap-2">
-                  {company.tags.map(({ tag }) => (
+                  {company.tags.map(({ tag }: { tag: { id: string; name: string; color: string } }) => (
                     <TagBadge key={tag.id} name={tag.name} color={tag.color} />
                   ))}
                 </div>
