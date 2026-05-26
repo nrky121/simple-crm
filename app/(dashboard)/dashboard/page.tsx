@@ -45,7 +45,10 @@ export default async function DashboardPage() {
           contact: { select: { id: true, firstName: true, lastName: true } },
         },
       }),
-    ]);
+    ]).catch((e: unknown) => {
+      console.error("[Dashboard] Prisma error:", JSON.stringify(e, Object.getOwnPropertyNames(e as object)));
+      throw e;
+    });
 
   type PipelineRow = { _count: { id: number }; _sum: { value: unknown } };
   const totalDeals = (pipeline as PipelineRow[]).reduce(
