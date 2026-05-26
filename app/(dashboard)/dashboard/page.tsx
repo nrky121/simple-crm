@@ -46,7 +46,10 @@ export default async function DashboardPage() {
         },
       }),
     ]).catch((e: unknown) => {
-      console.error("[Dashboard] Prisma error:", JSON.stringify(e, Object.getOwnPropertyNames(e as object)));
+      const err = e as Record<string, unknown>;
+      console.error("[DB:code]", err?.code);
+      console.error("[DB:msg]", err?.message);
+      console.error("[DB:meta]", JSON.stringify(err?.meta));
       throw e;
     });
 
