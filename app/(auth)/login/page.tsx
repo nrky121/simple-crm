@@ -42,6 +42,9 @@ export default function LoginPage() {
       return;
     }
 
+    // Ensure a profile row exists for this user (idempotent upsert)
+    await fetch("/api/auth/profile", { method: "POST" }).catch(() => null);
+
     router.push(next);
     router.refresh();
   }

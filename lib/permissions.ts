@@ -13,12 +13,21 @@ export async function getCurrentUser() {
     throw new UnauthorizedError("Not authenticated");
   }
 
-  const profile = await prisma.profile.findUnique({
+  // Upsert: create the profile row on first API call if it doesn't exist yet.
+  // This handles users who registered before the profile-creation flow was added.
+  const profile = await prisma.profile.upsert({
     where: { id: user.id },
+    create: {
+      id: user.id,
+      email: user.email!,
+      fullName: user.user_metadata?.full_name ?? null,
+      avatarUrl: user.user_metadata?.avatar_url ?? null,
+    },
+    update: {},   // never overwrite existing data on login
   });
 
-  if (!profile || !profile.isActive) {
-    throw new UnauthorizedError("Profile not found or inactive");
+  if (!profile.isActive) {
+    throw new UnauthorizedError("Account is inactive");
   }
 
   return profile;
