@@ -21,6 +21,10 @@ export default async function DashboardLayout({
   const profile = await prisma.profile.findUnique({
     where: { id: user.id },
     select: { fullName: true, avatarUrl: true },
+  }).catch((e: unknown) => {
+    const err = e as Record<string, unknown>;
+    console.error("[layout:profile] code:", err?.code, "msg:", err?.message);
+    return null;
   });
 
   return (
