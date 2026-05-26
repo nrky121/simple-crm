@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Users,
   Building2,
+  CheckSquare,
   Tag,
   Settings,
   LogOut,
@@ -28,6 +29,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/companies", label: "Companies", icon: Building2 },
+  { href: "/tasks", label: "Tasks", icon: CheckSquare },
 ];
 
 const bottomItems = [

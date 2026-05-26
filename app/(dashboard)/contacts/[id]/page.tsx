@@ -5,13 +5,13 @@ import Link from "next/link";
 import {
   formatFullName,
   formatDate,
-  formatRelativeTime,
 } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { TagBadge } from "@/components/common/TagBadge";
 import { ContactDetailActions } from "@/components/contacts/ContactDetailActions";
+import { ContactTasksPanel } from "@/components/contacts/ContactTasksPanel";
+import { ContactActivitiesPanel } from "@/components/contacts/ContactActivitiesPanel";
 import {
   Building2,
   Mail,
@@ -49,9 +49,8 @@ export default async function ContactDetailPage({
         },
       },
       tasks: {
-        where: { status: { in: ["OPEN", "IN_PROGRESS"] } },
-        orderBy: { dueDate: "asc" },
-        take: 10,
+        orderBy: [{ status: "asc" }, { dueDate: "asc" }],
+        take: 50,
         include: {
           assignee: { select: { id: true, fullName: true } },
         },
@@ -220,84 +219,41 @@ export default async function ContactDetailPage({
             </Card>
           )}
 
-          {/* Open tasks */}
-          {contact.tasks.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <CheckSquare className="h-4 w-4" />
-                  Open Tasks ({contact.tasks.length})
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-2">
-                  {contact.tasks.map((task: { id: string; title: string; priority: string; dueDate: Date | null }) => (
-                    <li
-                      key={task.id}
-                      className="flex items-center justify-between rounded-md border px-3 py-2"
-                    >
-                      <span className="text-sm">{task.title}</span>
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline">{task.priority}</Badge>
-                        {task.dueDate && (
-                          <span className="text-xs text-muted-foreground">
-                            {formatDate(task.dueDate)}
-                          </span>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          )}
+          {/* Tasks */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <CheckSquare className="h-4 w-4" />
+                Tasks
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ContactTasksPanel
+                contactId={contact.id}
+                initialTasks={contact.tasks.map((t: { id: string; title: string; status: string; priority: string; dueDate: Date | null }) => ({
+                  ...t,
+                  dueDate: t.dueDate ? t.dueDate.toISOString() : null,
+                }))}
+              />
+            </CardContent>
+          </Card>
 
           {/* Activity timeline */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-base">
                 <Activity className="h-4 w-4" />
-                Activity ({contact.activities.length})
+                Activity
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {contact.activities.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No activity yet.
-                </p>
-              ) : (
-                <ol className="space-y-4">
-                  {contact.activities.map((activity: { id: string; subject: string; type: string; body: string | null; occurredAt: Date; createdBy: { id: string; fullName: string | null } | null }, idx: number) => (
-                    <li key={activity.id} className="flex items-start gap-3">
-                      <div className="flex flex-col items-center">
-                        <div className="h-2 w-2 rounded-full bg-primary mt-1.5" />
-                        {idx < contact.activities.length - 1 && (
-                          <div className="w-px flex-1 bg-border mt-1" />
-                        )}
-                      </div>
-                      <div className="pb-4 min-w-0">
-                        <p className="text-sm font-medium">{activity.subject}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {activity.type}
-                          {activity.createdBy?.fullName && (
-                            <> · {activity.createdBy.fullName}</>
-                          )}
-                          {" · "}
-                          {formatRelativeTime(activity.occurredAt)}
-                        </p>
-                        {activity.body && (
-                          <>
-                            <Separator className="my-2" />
-                            <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                              {activity.body}
-                            </p>
-                          </>
-                        )}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              )}
+              <ContactActivitiesPanel
+                contactId={contact.id}
+                initialActivities={contact.activities.map((a: { id: string; type: string; subject: string; body: string | null; occurredAt: Date; createdBy: { id: string; fullName: string | null } | null }) => ({
+                  ...a,
+                  occurredAt: a.occurredAt.toISOString(),
+                }))}
+              />
             </CardContent>
           </Card>
         </div>
