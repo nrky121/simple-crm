@@ -15,28 +15,25 @@ export default async function DashboardPage() {
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const dbg = async <T,>(label: string, p: Promise<T>) =>
-    p.catch((e: unknown) => { const err = e as Record<string,unknown>; console.error(`[dash:${label}]`, err?.code, err?.message); throw e; });
-
   const [contactCount, companyCount, pipeline, recentActivities, upcomingTasks] =
     await Promise.all([
-      dbg("contact.count", prisma.contact.count({ where: { isArchived: false } })),
-      dbg("company.count", prisma.company.count({ where: { isArchived: false } })),
-      dbg("deal.groupBy", prisma.deal.groupBy({
+      prisma.contact.count({ where: { isArchived: false } }),
+      prisma.company.count({ where: { isArchived: false } }),
+      prisma.deal.groupBy({
         by: ["stage"],
         where: { isArchived: false },
         _count: { id: true },
         _sum: { value: true },
-      })),
-      dbg("activity.findMany", prisma.activity.findMany({
+      }),
+      prisma.activity.findMany({
         take: 10,
         orderBy: { occurredAt: "desc" },
         include: {
           contact: { select: { id: true, firstName: true, lastName: true } },
           createdBy: { select: { id: true, fullName: true } },
         },
-      })),
-      dbg("task.findMany", prisma.task.findMany({
+      }),
+      prisma.task.findMany({
         where: {
           status: { in: ["OPEN", "IN_PROGRESS"] },
           dueDate: { gte: new Date() },
@@ -47,16 +44,20 @@ export default async function DashboardPage() {
           assignee: { select: { id: true, fullName: true } },
           contact: { select: { id: true, firstName: true, lastName: true } },
         },
-      })),
+      }),
     ]);
 
-  type PipelineRow = { _count: { id: number }; _sum: { value: unknown } };
-  const totalDeals = (pipeline as PipelineRow[]).reduce(
-    (sum, s) => sum + s._count.id,
-    0
-  );
-  const totalPipelineValue = (pipeline as PipelineRow[]).reduce(
-    (sum, s) => sum + Number(s._sum.value ?? 0),
+  // Convert Prisma Decimal → plain number so RSC payload serializes cleanly
+  type PipelineRow = { stage: string; _count: { id: number }; _sum: { value: unknown } };
+  const serializedPipeline = (pipeline as PipelineRow[]).map((s) => ({
+    stage: s.stage,
+    _count: { id: s._count.id },
+    _sum: { value: Number(s._sum.value ?? 0) },
+  }));
+
+  const totalDeals = serializedPipeline.reduce((sum, s) => sum + s._count.id, 0);
+  const totalPipelineValue = serializedPipeline.reduce(
+    (sum, s) => sum + s._sum.value,
     0
   );
   const openTaskCount = upcomingTasks.length;
@@ -127,7 +128,7 @@ export default async function DashboardPage() {
           <CardTitle>Pipeline by Stage</CardTitle>
         </CardHeader>
         <CardContent>
-          <PipelineSummary stages={pipeline} />
+          <PipelineSummary stages={serializedPipeline} />
         </CardContent>
       </Card>
 

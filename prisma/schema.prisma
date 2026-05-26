@@ -58,13 +58,13 @@ enum TaskPriority {
 model Profile {
   id        String   @id @db.Uuid
   email     String   @unique
-  fullName  String?
-  avatarUrl String?
+  fullName  String?  @map("full_name")
+  avatarUrl String?  @map("avatar_url")
   role      Role     @default(USER)
   team      String?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   ownedContacts Contact[]  @relation("ContactOwner")
   ownedDeals    Deal[]     @relation("DealOwner")
@@ -79,10 +79,10 @@ model Tag {
   id        String   @id @default(uuid()) @db.Uuid
   name      String   @unique
   color     String   @default("#6366f1")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  contacts ContactTag[]
+  contacts  ContactTag[]
   companies CompanyTag[]
 
   @@map("tags")
@@ -95,16 +95,15 @@ model Company {
   industry    String?
   size        CompanySize?
   website     String?
-  linkedinUrl String?
+  linkedinUrl String?     @map("linkedin_url")
   country     String?
   city        String?
   notes       String?
-  isArchived  Boolean     @default(false)
-  searchVector String?    // tsvector stored as text; maintained by DB trigger
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  isArchived  Boolean     @default(false) @map("is_archived")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
 
-  ownerId    String?  @db.Uuid
+  ownerId    String?  @db.Uuid @map("owner_id")
   contacts   Contact[]
   deals      Deal[]
   tags       CompanyTag[]
@@ -117,9 +116,9 @@ model Company {
 }
 
 model CompanyTag {
-  companyId String   @db.Uuid
-  tagId     String   @db.Uuid
-  createdAt DateTime @default(now())
+  companyId String   @db.Uuid @map("company_id")
+  tagId     String   @db.Uuid @map("tag_id")
+  createdAt DateTime @default(now()) @map("created_at")
 
   company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
   tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
@@ -130,22 +129,21 @@ model CompanyTag {
 
 model Contact {
   id            String   @id @default(uuid()) @db.Uuid
-  firstName     String
-  lastName      String?
+  firstName     String   @map("first_name")
+  lastName      String?  @map("last_name")
   email         String?
   phone         String?
   title         String?
-  linkedinUrl   String?
-  twitterHandle String?
+  linkedinUrl   String?  @map("linkedin_url")
+  twitterHandle String?  @map("twitter_handle")
   notes         String?
   source        String?
-  isArchived    Boolean  @default(false)
-  searchVector  String?  // tsvector stored as text; maintained by DB trigger
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  isArchived    Boolean  @default(false) @map("is_archived")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
 
-  companyId String?  @db.Uuid
-  ownerId   String?  @db.Uuid
+  companyId String?  @db.Uuid @map("company_id")
+  ownerId   String?  @db.Uuid @map("owner_id")
 
   company    Company?   @relation(fields: [companyId], references: [id])
   owner      Profile?   @relation("ContactOwner", fields: [ownerId], references: [id])
@@ -162,9 +160,9 @@ model Contact {
 }
 
 model ContactTag {
-  contactId String   @db.Uuid
-  tagId     String   @db.Uuid
-  createdAt DateTime @default(now())
+  contactId String   @db.Uuid @map("contact_id")
+  tagId     String   @db.Uuid @map("tag_id")
+  createdAt DateTime @default(now()) @map("created_at")
 
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
   tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
@@ -174,21 +172,21 @@ model ContactTag {
 }
 
 model Deal {
-  id          String    @id @default(uuid()) @db.Uuid
-  title       String
-  value       Decimal?  @db.Decimal(14, 2)
-  currency    String    @default("USD")
-  stage       DealStage @default(LEAD)
-  probability Int?      // 0-100
-  expectedCloseDate DateTime?
-  closedAt    DateTime?
-  notes       String?
-  isArchived  Boolean   @default(false)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id                String    @id @default(uuid()) @db.Uuid
+  title             String
+  value             Decimal?  @db.Decimal(14, 2)
+  currency          String    @default("USD")
+  stage             DealStage @default(LEAD)
+  probability       Int?
+  expectedCloseDate DateTime? @map("expected_close_date")
+  closedAt          DateTime? @map("closed_at")
+  notes             String?
+  isArchived        Boolean   @default(false) @map("is_archived")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
 
-  companyId String?  @db.Uuid
-  ownerId   String?  @db.Uuid
+  companyId String?  @db.Uuid @map("company_id")
+  ownerId   String?  @db.Uuid @map("owner_id")
 
   company      Company?          @relation(fields: [companyId], references: [id])
   owner        Profile?          @relation("DealOwner", fields: [ownerId], references: [id])
@@ -205,10 +203,10 @@ model Deal {
 }
 
 model DealContact {
-  dealId    String   @db.Uuid
-  contactId String   @db.Uuid
-  isPrimary Boolean  @default(false)
-  createdAt DateTime @default(now())
+  dealId    String   @db.Uuid @map("deal_id")
+  contactId String   @db.Uuid @map("contact_id")
+  isPrimary Boolean  @default(false) @map("is_primary")
+  createdAt DateTime @default(now()) @map("created_at")
 
   deal    Deal    @relation(fields: [dealId], references: [id], onDelete: Cascade)
   contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
@@ -218,12 +216,12 @@ model DealContact {
 }
 
 model DealStageHistory {
-  id        String    @id @default(uuid()) @db.Uuid
-  dealId    String    @db.Uuid
-  fromStage DealStage?
-  toStage   DealStage
-  changedAt DateTime  @default(now())
-  changedBy String?   @db.Uuid
+  id        String     @id @default(uuid()) @db.Uuid
+  dealId    String     @db.Uuid @map("deal_id")
+  fromStage DealStage? @map("from_stage")
+  toStage   DealStage  @map("to_stage")
+  changedAt DateTime   @default(now()) @map("changed_at")
+  changedBy String?    @db.Uuid @map("changed_by")
 
   deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
@@ -232,18 +230,18 @@ model DealStageHistory {
 }
 
 model Activity {
-  id        String       @id @default(uuid()) @db.Uuid
-  type      ActivityType
-  subject   String
-  body      String?
-  occurredAt DateTime    @default(now())
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id         String       @id @default(uuid()) @db.Uuid
+  type       ActivityType
+  subject    String
+  body       String?
+  occurredAt DateTime     @default(now()) @map("occurred_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
 
-  createdById String?  @db.Uuid
-  contactId   String?  @db.Uuid
-  companyId   String?  @db.Uuid
-  dealId      String?  @db.Uuid
+  createdById String?  @db.Uuid @map("created_by_id")
+  contactId   String?  @db.Uuid @map("contact_id")
+  companyId   String?  @db.Uuid @map("company_id")
+  dealId      String?  @db.Uuid @map("deal_id")
 
   createdBy Profile? @relation("ActivityCreator", fields: [createdById], references: [id])
   contact   Contact? @relation(fields: [contactId], references: [id])
@@ -263,14 +261,14 @@ model Task {
   description String?
   status      TaskStatus   @default(OPEN)
   priority    TaskPriority @default(MEDIUM)
-  dueDate     DateTime?
-  completedAt DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
+  dueDate     DateTime?    @map("due_date")
+  completedAt DateTime?    @map("completed_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
 
-  assigneeId String?  @db.Uuid
-  contactId  String?  @db.Uuid
-  dealId     String?  @db.Uuid
+  assigneeId String?  @db.Uuid @map("assignee_id")
+  contactId  String?  @db.Uuid @map("contact_id")
+  dealId     String?  @db.Uuid @map("deal_id")
 
   assignee Profile? @relation("TaskAssignee", fields: [assigneeId], references: [id])
   contact  Contact? @relation(fields: [contactId], references: [id])
@@ -286,12 +284,12 @@ model Task {
 
 model AuditLog {
   id        String   @id @default(uuid()) @db.Uuid
-  userId    String   @db.Uuid
+  userId    String   @db.Uuid @map("user_id")
   model     String
-  recordId  String
+  recordId  String   @map("record_id")
   action    String
   changes   Json?
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
 
   user Profile @relation(fields: [userId], references: [id])
 
