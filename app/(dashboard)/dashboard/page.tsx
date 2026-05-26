@@ -73,51 +73,51 @@ export default async function DashboardPage() {
 
       {/* Stat cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="bg-blue-600 text-white border-blue-600">
+        <Card className="bg-green-600 text-white border-green-600">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-blue-100">Total Contacts</CardTitle>
-            <Users className="h-4 w-4 text-blue-200" />
+            <CardTitle className="text-sm font-medium text-green-100">Total Contacts</CardTitle>
+            <Users className="h-4 w-4 text-green-200" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{contactCount.toLocaleString()}</div>
-            <p className="text-xs text-blue-200">Active contacts</p>
+            <p className="text-xs text-green-200">Active contacts</p>
           </CardContent>
         </Card>
 
-        <Card className="bg-blue-600 text-white border-blue-600">
+        <Card className="bg-green-600 text-white border-green-600">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-blue-100">Companies</CardTitle>
-            <Building2 className="h-4 w-4 text-blue-200" />
+            <CardTitle className="text-sm font-medium text-green-100">Companies</CardTitle>
+            <Building2 className="h-4 w-4 text-green-200" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{companyCount.toLocaleString()}</div>
-            <p className="text-xs text-blue-200">Active companies</p>
+            <p className="text-xs text-green-200">Active companies</p>
           </CardContent>
         </Card>
 
-        <Card className="bg-blue-600 text-white border-blue-600">
+        <Card className="bg-green-600 text-white border-green-600">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-blue-100">Pipeline Value</CardTitle>
-            <TrendingUp className="h-4 w-4 text-blue-200" />
+            <CardTitle className="text-sm font-medium text-green-100">Pipeline Value</CardTitle>
+            <TrendingUp className="h-4 w-4 text-green-200" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
               {formatCurrency(totalPipelineValue)}
             </div>
-            <p className="text-xs text-blue-200">
+            <p className="text-xs text-green-200">
               {totalDeals} active deal{totalDeals !== 1 ? "s" : ""}
             </p>
           </CardContent>
         </Card>
 
-        <Card className="bg-blue-600 text-white border-blue-600">
+        <Card className="bg-green-600 text-white border-green-600">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-blue-100">Upcoming Tasks</CardTitle>
-            <CheckSquare className="h-4 w-4 text-blue-200" />
+            <CardTitle className="text-sm font-medium text-green-100">Upcoming Tasks</CardTitle>
+            <CheckSquare className="h-4 w-4 text-green-200" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{openTaskCount}</div>
-            <p className="text-xs text-blue-200">Open or in progress</p>
+            <p className="text-xs text-green-200">Open or in progress</p>
           </CardContent>
         </Card>
       </div>
